@@ -432,7 +432,3 @@ This connector leverages Apache Iceberg's advanced features:
 - **Time Travel**: Query historical data at any snapshot
 - **Hidden Partitioning**: Automatic partition management
 - **Table Maintenance**: Built-in compaction and cleanup
-
-## Support
-
-For issues and feature requests, please use the [GitHub Issues](https://github.com/1gn45/iceberg-spark-connector/issues) page.
