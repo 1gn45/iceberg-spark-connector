@@ -51,9 +51,24 @@ class IcebergConnector:
         except Exception as e:
             raise ValueError(f"Error creating namespace: {e}")
     
-    def _get_table_name(self, table: str) -> str:
-        """Get fully qualified table name."""
+    def get_table_name(self, table: str) -> str:
+        """
+        Get fully qualified table name.
+        
+        Args:
+            table: Table name
+            
+        Returns:
+            str: Fully qualified table name (catalog.namespace.table)
+        """
         return f"{self.catalog}.{self.namespace}.{table}"
+    
+    def _get_table_name(self, table: str) -> str:
+        """
+        Deprecated: Use get_table_name() instead.
+        Get fully qualified table name.
+        """
+        return self.get_table_name(table)
     
     # ============= READ OPERATIONS =============
     
@@ -440,6 +455,56 @@ class IcebergConnector:
         except Exception as e:
             raise ValueError(f"Error deleting row: {e}")
     
+    def upsert_dataframe_data(
+        self,
+        table: str,
+        df: pd.DataFrame,
+        id_column: str = "id",
+    ) -> bool:
+        """
+        Upsert (insert or update) data from a DataFrame using Iceberg MERGE.
+        Updates existing rows and inserts new rows in a single operation.
+        
+        Args:
+            table: Table name
+            df: pandas DataFrame with data to upsert
+            id_column: Name of the ID column for matching (default: 'id')
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            full_table = self._get_table_name(table)
+            
+            if id_column not in df.columns:
+                raise ValueError(f"DataFrame must include {id_column} column")
+            
+            # Convert to Spark DataFrame
+            spark_df = self.spark.createDataFrame(df)
+            spark_df.createOrReplaceTempView("upsert_data")
+            
+            # Get columns to update (excluding ID)
+            update_cols = [col for col in df.columns if col != id_column]
+            set_clause = ", ".join(f"t.{col} = s.{col}" for col in update_cols)
+            
+            # Get all columns for insert
+            insert_cols = ", ".join(df.columns)
+            insert_values = ", ".join(f"s.{col}" for col in df.columns)
+            
+            # Execute MERGE (upsert)
+            merge_sql = f"""
+                MERGE INTO {full_table} t
+                USING upsert_data s
+                ON t.{id_column} = s.{id_column}
+                WHEN MATCHED THEN UPDATE SET {set_clause}
+                WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_values})
+            """
+            
+            self.spark.sql(merge_sql)
+            return True
+        except Exception as e:
+            raise ValueError(f"Error upserting dataframe data: {e}")
+    
     # ============= UTILITY OPERATIONS =============
     
     def run_sql(self, query: str) -> pd.DataFrame:
@@ -584,3 +649,464 @@ class IcebergConnector:
             return f"Deleted {len(duplicate_ids)} duplicate rows."
         except Exception as e:
             raise ValueError(f"Error removing duplicate rows: {e}")
+    
+    # ============= FILE OPERATIONS =============
+    
+    def load_data_from_file(
+        self,
+        table: str,
+        file_path: str,
+        file_format: str = "csv",
+        mode: str = "append",
+        options: Optional[Dict[str, str]] = None,
+    ) -> bool:
+        """
+        Load data from a file (CSV, JSON, Parquet) into an Iceberg table.
+        
+        Args:
+            table: Table name
+            file_path: Path to the file (local or remote)
+            file_format: File format ('csv', 'json', 'parquet')
+            mode: Write mode ('append', 'overwrite', 'error', 'ignore')
+            options: Additional options for reading the file (e.g., {'header': 'true', 'delimiter': ','})
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            full_table = self._get_table_name(table)
+            
+            # Default options for CSV
+            if options is None and file_format == "csv":
+                options = {"header": "true", "inferSchema": "true"}
+            
+            # Read file
+            reader = self.spark.read.format(file_format)
+            if options:
+                for key, value in options.items():
+                    reader = reader.option(key, value)
+            
+            df = reader.load(file_path)
+            
+            # Check if table exists
+            table_exists = self.table_exists(table)
+            
+            # Write to table
+            if table_exists:
+                # Table exists, use appropriate write mode
+                if mode == "overwrite":
+                    # Use standard write API for overwrite
+                    df.write.format("iceberg").mode("overwrite").saveAsTable(full_table)
+                else:
+                    df.writeTo(full_table).append()
+            else:
+                # Table doesn't exist, create it
+                df.writeTo(full_table).using("iceberg").create()
+            
+            return True
+        except Exception as e:
+            raise ValueError(f"Error loading data from file: {e}")
+    
+    def export_table_to_file(
+        self,
+        table: str,
+        file_path: str,
+        file_format: str = "csv",
+        mode: str = "overwrite",
+        options: Optional[Dict[str, str]] = None,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """
+        Export table data to a file (CSV, JSON, Parquet).
+        
+        Args:
+            table: Table name
+            file_path: Output file path
+            file_format: File format ('csv', 'json', 'parquet')
+            mode: Write mode ('overwrite', 'append', 'ignore', 'error')
+            options: Additional write options (e.g., {'header': 'true'})
+            filters: Optional filters to apply before export
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            full_table = self._get_table_name(table)
+            df = self.spark.table(full_table)
+            
+            # Apply filters if provided
+            if filters:
+                for key, value in filters.items():
+                    column = F.col(key)
+                    
+                    if isinstance(value, dict):
+                        start = value.get("start_date")
+                        end = value.get("end_date")
+                        if start and end:
+                            df = df.filter((column >= start) & (column <= end))
+                    
+                    elif isinstance(value, tuple) and len(value) == 2:
+                        df = df.filter((column >= value[0]) & (column <= value[1]))
+                    
+                    elif isinstance(value, list):
+                        df = df.filter(column.isin(value))
+                    
+                    elif isinstance(value, bool):
+                        df = df.filter(column == value)
+                    
+                    elif isinstance(value, (str, int, float)):
+                        if isinstance(value, str):
+                            df = df.filter(F.lower(column) == value.lower())
+                        else:
+                            df = df.filter(column == value)
+            
+            # Default options for CSV
+            if options is None and file_format == "csv":
+                options = {"header": "true"}
+            
+            # Write file
+            writer = df.write.format(file_format).mode(mode)
+            if options:
+                for key, value in options.items():
+                    writer = writer.option(key, value)
+            
+            writer.save(file_path)
+            
+            return True
+        except Exception as e:
+            raise ValueError(f"Error exporting table to file: {e}")
+    
+    # ============= TABLE MANAGEMENT =============
+    
+    def create_table_from_dataframe(
+        self,
+        table: str,
+        df: pd.DataFrame,
+        partition_by: Optional[List[str]] = None,
+    ) -> bool:
+        """
+        Create a new Iceberg table from a pandas DataFrame.
+        
+        Args:
+            table: Table name
+            df: pandas DataFrame with data
+            partition_by: List of column names to partition by
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            full_table = self._get_table_name(table)
+            
+            # Convert to Spark DataFrame
+            spark_df = self.spark.createDataFrame(df)
+            
+            # Create table
+            writer = spark_df.writeTo(full_table).using("iceberg")
+            
+            if partition_by:
+                writer = writer.partitionedBy(*partition_by)
+            
+            writer.create()
+            
+            return True
+        except Exception as e:
+            raise ValueError(f"Error creating table from DataFrame: {e}")
+    
+    def clone_table(
+        self,
+        source_table: str,
+        target_table: str,
+        include_data: bool = True,
+    ) -> bool:
+        """
+        Clone an existing table (schema and optionally data).
+        
+        Args:
+            source_table: Source table name
+            target_table: Target table name
+            include_data: If True, copy data; if False, only copy schema
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            source_full = self._get_table_name(source_table)
+            target_full = self._get_table_name(target_table)
+            
+            # Read source table
+            df = self.spark.table(source_full)
+            
+            if include_data:
+                # Copy with data
+                df.writeTo(target_full).using("iceberg").create()
+            else:
+                # Copy only schema (create empty table)
+                df.limit(0).writeTo(target_full).using("iceberg").create()
+            
+            return True
+        except Exception as e:
+            raise ValueError(f"Error cloning table: {e}")
+    
+    def drop_table(self, table: str, purge: bool = False) -> bool:
+        """
+        Drop a table.
+        
+        Args:
+            table: Table name
+            purge: If True, also delete underlying data files
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            full_table = self._get_table_name(table)
+            
+            if purge:
+                self.spark.sql(f"DROP TABLE IF EXISTS {full_table} PURGE")
+            else:
+                self.spark.sql(f"DROP TABLE IF EXISTS {full_table}")
+            
+            return True
+        except Exception as e:
+            raise ValueError(f"Error dropping table: {e}")
+    
+    def truncate_table(self, table: str) -> bool:
+        """
+        Truncate a table (delete all data but keep schema).
+        
+        Args:
+            table: Table name
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            full_table = self._get_table_name(table)
+            self.spark.sql(f"TRUNCATE TABLE {full_table}")
+            return True
+        except Exception as e:
+            raise ValueError(f"Error truncating table: {e}")
+    
+    # ============= SCHEMA OPERATIONS =============
+    
+    def add_column(
+        self,
+        table: str,
+        column_name: str,
+        column_type: str,
+        comment: Optional[str] = None,
+    ) -> bool:
+        """
+        Add a new column to an existing table.
+        
+        Args:
+            table: Table name
+            column_name: Name of the new column
+            column_type: Data type (e.g., 'STRING', 'INT', 'TIMESTAMP')
+            comment: Optional column comment
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            full_table = self._get_table_name(table)
+            
+            sql = f"ALTER TABLE {full_table} ADD COLUMN {column_name} {column_type}"
+            if comment:
+                sql += f" COMMENT '{comment}'"
+            
+            self.spark.sql(sql)
+            return True
+        except Exception as e:
+            raise ValueError(f"Error adding column: {e}")
+    
+    def drop_column(self, table: str, column_name: str) -> bool:
+        """
+        Drop a column from a table.
+        
+        Args:
+            table: Table name
+            column_name: Name of the column to drop
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            full_table = self._get_table_name(table)
+            self.spark.sql(f"ALTER TABLE {full_table} DROP COLUMN {column_name}")
+            return True
+        except Exception as e:
+            raise ValueError(f"Error dropping column: {e}")
+    
+    def rename_column(
+        self, table: str, old_name: str, new_name: str
+    ) -> bool:
+        """
+        Rename a column in a table.
+        
+        Args:
+            table: Table name
+            old_name: Current column name
+            new_name: New column name
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            full_table = self._get_table_name(table)
+            self.spark.sql(
+                f"ALTER TABLE {full_table} RENAME COLUMN {old_name} TO {new_name}"
+            )
+            return True
+        except Exception as e:
+            raise ValueError(f"Error renaming column: {e}")
+    
+    # ============= VIEW OPERATIONS =============
+    
+    def create_view(
+        self,
+        view_name: str,
+        query: str,
+        replace: bool = False,
+    ) -> bool:
+        """
+        Create a view from a SQL query.
+        
+        Args:
+            view_name: Name of the view
+            query: SQL query for the view
+            replace: If True, replace existing view
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            full_view = self._get_table_name(view_name)
+            
+            if replace:
+                sql = f"CREATE OR REPLACE VIEW {full_view} AS {query}"
+            else:
+                sql = f"CREATE VIEW {full_view} AS {query}"
+            
+            self.spark.sql(sql)
+            return True
+        except Exception as e:
+            raise ValueError(f"Error creating view: {e}")
+    
+    def drop_view(self, view_name: str) -> bool:
+        """
+        Drop a view.
+        
+        Args:
+            view_name: Name of the view to drop
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            full_view = self._get_table_name(view_name)
+            self.spark.sql(f"DROP VIEW IF EXISTS {full_view}")
+            return True
+        except Exception as e:
+            raise ValueError(f"Error dropping view: {e}")
+    
+    # ============= UTILITY OPERATIONS =============
+    
+    def test_connection(self) -> Dict[str, Any]:
+        """
+        Test the connection and return session information.
+        
+        Returns:
+            Dict[str, Any]: Connection status and session info
+        """
+        try:
+            # Try to execute a simple query
+            result = self.spark.sql("SELECT 1 as test").collect()
+            
+            return {
+                "status": "connected",
+                "catalog": self.catalog,
+                "namespace": self.namespace,
+                "spark_version": self.spark.version,
+                "session_id": self.session_id,
+            }
+        except Exception as e:
+            return {
+                "status": "failed",
+                "error": str(e),
+            }
+    
+    def list_tables(self, namespace: Optional[str] = None) -> List[str]:
+        """
+        List all tables in a namespace.
+        
+        Args:
+            namespace: Namespace to list tables from (defaults to current namespace)
+            
+        Returns:
+            List[str]: List of table names
+        """
+        try:
+            ns = namespace or self.namespace
+            tables_df = self.spark.sql(f"SHOW TABLES IN {self.catalog}.{ns}")
+            table_names = [row["tableName"] for row in tables_df.collect()]
+            return table_names
+        except Exception as e:
+            raise ValueError(f"Error listing tables: {e}")
+    
+    def create_table_with_sql(
+        self,
+        table: str,
+        schema: str,
+        partition_by: Optional[str] = None,
+    ) -> bool:
+        """
+        Create an Iceberg table using SQL DDL.
+        
+        Args:
+            table: Table name
+            schema: Column definitions (e.g., "id STRING, name STRING, age INT")
+            partition_by: Partition specification (e.g., "days(timestamp)")
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            full_table = self._get_table_name(table)
+            
+            sql = f"CREATE TABLE IF NOT EXISTS {full_table} ({schema}) USING iceberg"
+            
+            if partition_by:
+                sql += f" PARTITIONED BY ({partition_by})"
+            
+            self.spark.sql(sql)
+            return True
+        except Exception as e:
+            raise ValueError(f"Error creating table: {e}")
+    
+    def get_table_stats(self, table: str) -> Dict[str, Any]:
+        """
+        Get statistics about a table.
+        
+        Args:
+            table: Table name
+            
+        Returns:
+            Dict[str, Any]: Table statistics
+        """
+        try:
+            full_table = self._get_table_name(table)
+            df = self.spark.table(full_table)
+            
+            row_count = df.count()
+            schema = [(field.name, str(field.dataType)) for field in df.schema.fields]
+            
+            return {
+                "table": table,
+                "row_count": row_count,
+                "column_count": len(schema),
+                "columns": schema,
+            }
+        except Exception as e:
+            raise ValueError(f"Error getting table stats: {e}")

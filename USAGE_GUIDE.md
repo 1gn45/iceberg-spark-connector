@@ -118,6 +118,227 @@ updates = pd.DataFrame({
 conn.update_dataframe_data("products", df_updates=updates)
 ```
 
+## File Operations
+
+### Loading Data from Files
+
+The connector supports loading data from CSV, JSON, and Parquet files:
+
+```python
+# Load from CSV
+conn.load_data_from_file(
+    table="products",
+    file_path="/path/to/data.csv",
+    file_format="csv",
+    mode="append",
+    options={"header": "true", "delimiter": ","}
+)
+
+# Load from JSON
+conn.load_data_from_file(
+    table="events",
+    file_path="/path/to/events.json",
+    file_format="json",
+    mode="append"
+)
+
+# Load from Parquet
+conn.load_data_from_file(
+    table="analytics",
+    file_path="s3://bucket/data/*.parquet",
+    file_format="parquet",
+    mode="overwrite"
+)
+```
+
+### Exporting Data to Files
+
+Export table data with optional filtering:
+
+```python
+# Export to CSV
+conn.export_table_to_file(
+    table="orders",
+    file_path="/output/orders.csv",
+    file_format="csv",
+    options={"header": "true"},
+    filters={"status": "completed"}
+)
+
+# Export to Parquet (better for large datasets)
+conn.export_table_to_file(
+    table="transactions",
+    file_path="/output/transactions.parquet",
+    file_format="parquet",
+    filters={"date": {"start_date": "2024-01-01", "end_date": "2024-12-31"}}
+)
+
+# Export to JSON
+conn.export_table_to_file(
+    table="users",
+    file_path="/output/users.json",
+    file_format="json"
+)
+```
+
+## Table Management
+
+### Creating Tables from DataFrames
+
+Create Iceberg tables directly from pandas DataFrames:
+
+```python
+import pandas as pd
+
+# Create DataFrame
+df = pd.DataFrame({
+    "customer_id": ["c001", "c002", "c003"],
+    "name": ["Alice", "Bob", "Charlie"],
+    "country": ["USA", "UK", "Canada"]
+})
+
+# Create table
+conn.create_table_from_dataframe(
+    table="customers",
+    df=df,
+    partition_by=["country"]  # Optional partitioning
+)
+```
+
+### Cloning Tables
+
+Create copies of existing tables:
+
+```python
+# Clone with data (backup)
+conn.clone_table(
+    source_table="customers",
+    target_table="customers_backup",
+    include_data=True
+)
+
+# Clone only schema (template)
+conn.clone_table(
+    source_table="customers",
+    target_table="customers_template",
+    include_data=False
+)
+```
+
+### Dropping and Truncating Tables
+
+```python
+# Drop table (keep metadata)
+conn.drop_table("old_table")
+
+# Drop table and purge all files
+conn.drop_table("old_table", purge=True)
+
+# Truncate table (delete data, keep schema)
+conn.truncate_table("temp_table")
+```
+
+## Schema Evolution
+
+Apache Iceberg supports schema evolution without rewriting data:
+
+### Adding Columns
+
+```python
+# Add a new column
+conn.add_column(
+    table="products",
+    column_name="supplier_id",
+    column_type="STRING",
+    comment="Supplier identifier"
+)
+
+# Add multiple data types
+conn.add_column(table="orders", column_name="discount", column_type="DOUBLE")
+conn.add_column(table="orders", column_name="notes", column_type="STRING")
+conn.add_column(table="orders", column_name="processed", column_type="BOOLEAN")
+```
+
+### Dropping Columns
+
+```python
+# Drop a column
+conn.drop_column(table="products", column_name="old_field")
+```
+
+### Renaming Columns
+
+```python
+# Rename a column
+conn.rename_column(
+    table="customers",
+    old_name="email",
+    new_name="email_address"
+)
+```
+
+## View Operations
+
+Create and manage views for complex queries:
+
+```python
+# Create a view
+conn.create_view(
+    view_name="high_value_customers",
+    query="""
+        SELECT customer_id, name, SUM(order_total) as total_spent
+        FROM iceberg_catalog.my_database.orders
+        WHERE status = 'completed'
+        GROUP BY customer_id, name
+        HAVING SUM(order_total) > 1000
+    """,
+    replace=False
+)
+
+# Create or replace view
+conn.create_view(
+    view_name="active_users",
+    query="SELECT * FROM iceberg_catalog.my_database.users WHERE active = true",
+    replace=True
+)
+
+# Drop a view
+conn.drop_view("old_view")
+```
+
+## Connection & Metadata Operations
+
+### Testing Connection
+
+```python
+# Test connection and get session info
+conn_info = conn.test_connection()
+print(f"Status: {conn_info['status']}")
+print(f"Catalog: {conn_info['catalog']}")
+print(f"Spark Version: {conn_info['spark_version']}")
+```
+
+### Listing Tables
+
+```python
+# List all tables in current namespace
+tables = conn.list_tables()
+print(f"Tables: {tables}")
+
+# List tables in specific namespace
+tables = conn.list_tables(namespace="other_database")
+```
+
+### Getting Table Statistics
+
+```python
+# Get comprehensive table stats
+stats = conn.get_table_stats("products")
+print(f"Rows: {stats['row_count']}")
+print(f"Columns: {stats['column_count']}")
+print(f"Schema: {stats['columns']}")
+```
+
 ### Time Travel (Iceberg Feature)
 
 ```python
