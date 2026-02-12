@@ -206,6 +206,10 @@ tables = conn.list_tables()
 
 # Get table statistics
 stats = conn.get_table_stats("users")
+
+# Get fully qualified table name
+full_table_name = conn.get_table_name("users")
+# Returns: "iceberg_catalog.my_database.users"
 ```
 
 #### File Operations

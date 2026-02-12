@@ -148,7 +148,7 @@ print("-" * 60)
 
 # Create a view for low stock products
 print("Creating low_stock_view...")
-full_table = conn._get_table_name("products")
+full_table = conn.get_table_name("products")
 conn.create_view(
     view_name="low_stock_products",
     query=f"SELECT id, product, stock_level FROM {full_table} WHERE stock_level < 20",
@@ -159,7 +159,7 @@ print("✓ View created")
 # Query the view
 print("\nQuerying low_stock_products view...")
 low_stock = conn.run_sql(
-    f"SELECT * FROM {conn._get_table_name('low_stock_products')}"
+    f"SELECT * FROM {conn.get_table_name('low_stock_products')}"
 )
 print(f"Found {len(low_stock)} products with low stock:")
 print(low_stock[["id", "product", "stock_level"]])

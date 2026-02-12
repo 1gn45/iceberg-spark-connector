@@ -325,7 +325,7 @@ def test_create_drop_view(connector):
     )
     
     # Create view
-    full_table = connector._get_table_name("test_users")
+    full_table = connector.get_table_name("test_users")
     result = connector.create_view(
         view_name="test_active_users",
         query=f"SELECT * FROM {full_table} WHERE active = true",

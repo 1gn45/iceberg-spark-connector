@@ -51,9 +51,24 @@ class IcebergConnector:
         except Exception as e:
             raise ValueError(f"Error creating namespace: {e}")
     
-    def _get_table_name(self, table: str) -> str:
-        """Get fully qualified table name."""
+    def get_table_name(self, table: str) -> str:
+        """
+        Get fully qualified table name.
+        
+        Args:
+            table: Table name
+            
+        Returns:
+            str: Fully qualified table name (catalog.namespace.table)
+        """
         return f"{self.catalog}.{self.namespace}.{table}"
+    
+    def _get_table_name(self, table: str) -> str:
+        """
+        Deprecated: Use get_table_name() instead.
+        Get fully qualified table name.
+        """
+        return self.get_table_name(table)
     
     # ============= READ OPERATIONS =============
     
@@ -678,9 +693,10 @@ class IcebergConnector:
             
             # Write to table
             if table_exists:
-                # Table exists, use append or overwrite
+                # Table exists, use appropriate write mode
                 if mode == "overwrite":
-                    df.writeTo(full_table).using("iceberg").overwritePartitions()
+                    # Use standard write API for overwrite
+                    df.write.format("iceberg").mode("overwrite").saveAsTable(full_table)
                 else:
                     df.writeTo(full_table).append()
             else:
