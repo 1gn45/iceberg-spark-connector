@@ -440,6 +440,56 @@ class IcebergConnector:
         except Exception as e:
             raise ValueError(f"Error deleting row: {e}")
     
+    def upsert_dataframe_data(
+        self,
+        table: str,
+        df: pd.DataFrame,
+        id_column: str = "id",
+    ) -> bool:
+        """
+        Upsert (insert or update) data from a DataFrame using Iceberg MERGE.
+        Updates existing rows and inserts new rows in a single operation.
+        
+        Args:
+            table: Table name
+            df: pandas DataFrame with data to upsert
+            id_column: Name of the ID column for matching (default: 'id')
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            full_table = self._get_table_name(table)
+            
+            if id_column not in df.columns:
+                raise ValueError(f"DataFrame must include {id_column} column")
+            
+            # Convert to Spark DataFrame
+            spark_df = self.spark.createDataFrame(df)
+            spark_df.createOrReplaceTempView("upsert_data")
+            
+            # Get columns to update (excluding ID)
+            update_cols = [col for col in df.columns if col != id_column]
+            set_clause = ", ".join(f"t.{col} = s.{col}" for col in update_cols)
+            
+            # Get all columns for insert
+            insert_cols = ", ".join(df.columns)
+            insert_values = ", ".join(f"s.{col}" for col in df.columns)
+            
+            # Execute MERGE (upsert)
+            merge_sql = f"""
+                MERGE INTO {full_table} t
+                USING upsert_data s
+                ON t.{id_column} = s.{id_column}
+                WHEN MATCHED THEN UPDATE SET {set_clause}
+                WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_values})
+            """
+            
+            self.spark.sql(merge_sql)
+            return True
+        except Exception as e:
+            raise ValueError(f"Error upserting dataframe data: {e}")
+    
     # ============= UTILITY OPERATIONS =============
     
     def run_sql(self, query: str) -> pd.DataFrame:
@@ -623,8 +673,19 @@ class IcebergConnector:
             
             df = reader.load(file_path)
             
+            # Check if table exists
+            table_exists = self.table_exists(table)
+            
             # Write to table
-            df.writeTo(full_table).using("iceberg").mode(mode).create()
+            if table_exists:
+                # Table exists, use append or overwrite
+                if mode == "overwrite":
+                    df.writeTo(full_table).using("iceberg").overwritePartitions()
+                else:
+                    df.writeTo(full_table).append()
+            else:
+                # Table doesn't exist, create it
+                df.writeTo(full_table).using("iceberg").create()
             
             return True
         except Exception as e:
@@ -977,6 +1038,36 @@ class IcebergConnector:
             return table_names
         except Exception as e:
             raise ValueError(f"Error listing tables: {e}")
+    
+    def create_table_with_sql(
+        self,
+        table: str,
+        schema: str,
+        partition_by: Optional[str] = None,
+    ) -> bool:
+        """
+        Create an Iceberg table using SQL DDL.
+        
+        Args:
+            table: Table name
+            schema: Column definitions (e.g., "id STRING, name STRING, age INT")
+            partition_by: Partition specification (e.g., "days(timestamp)")
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            full_table = self._get_table_name(table)
+            
+            sql = f"CREATE TABLE IF NOT EXISTS {full_table} ({schema}) USING iceberg"
+            
+            if partition_by:
+                sql += f" PARTITIONED BY ({partition_by})"
+            
+            self.spark.sql(sql)
+            return True
+        except Exception as e:
+            raise ValueError(f"Error creating table: {e}")
     
     def get_table_stats(self, table: str) -> Dict[str, Any]:
         """

@@ -156,6 +156,19 @@ conn.update_dataframe_data(
 
 # Delete a row
 conn.delete_row(table="users", row_id="user_to_delete")
+
+# Upsert data (insert or update in one operation)
+upsert_df = pd.DataFrame({
+    "id": ["user1", "user2", "user3"],
+    "name": ["Updated User 1", "Updated User 2", "New User 3"],
+    "status": ["active", "active", "pending"]
+})
+
+conn.upsert_dataframe_data(
+    table="users",
+    df=upsert_df,
+    id_column="id"
+)
 ```
 
 #### Utility Operations

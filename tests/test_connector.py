@@ -390,5 +390,41 @@ def test_truncate_table(connector):
     assert len(data_after) == 0
 
 
+def test_upsert_dataframe(connector):
+    """Test upsert (insert or update) operation."""
+    import pandas as pd
+    
+    # Insert initial data
+    connector.insert_row_data(
+        "test_users",
+        {"id": "ups1", "name": "Original Name", "email": "original@test.com", "age": 25, "active": True}
+    )
+    
+    # Upsert data (update ups1, insert ups2)
+    upsert_df = pd.DataFrame({
+        "id": ["ups1", "ups2"],
+        "name": ["Updated Name", "New User"],
+        "email": ["updated@test.com", "new@test.com"],
+        "age": [26, 30],
+        "active": [True, True]
+    })
+    
+    result = connector.upsert_dataframe_data(
+        table="test_users",
+        df=upsert_df,
+        id_column="id"
+    )
+    assert result is True
+    
+    # Verify update
+    updated = connector.fetch_row_by_id("test_users", "ups1")
+    assert updated["name"] == "Updated Name"
+    assert updated["age"] == 26
+    
+    # Verify insert
+    inserted = connector.fetch_row_by_id("test_users", "ups2")
+    assert inserted["name"] == "New User"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
