@@ -437,6 +437,14 @@ This connector leverages Apache Iceberg's advanced features:
 
 MIT
 
+## Migration from Snowflake
+
+Looking to replace Snowflake with this connector? Check out the [Snowflake Migration Guide](SNOWFLAKE_MIGRATION.md) for:
+- Feature comparison and mapping
+- Migration examples
+- Advantages of Iceberg over Snowflake
+- Deployment options
+
 ## Contributing
 
 Contributions welcome! Please feel free to submit a Pull Request.

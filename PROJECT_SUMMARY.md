@@ -34,13 +34,38 @@ All CRUD operations from the original Snowflake connector have been ported to wo
 - ✅ `insert_row_data()` - Insert single row
 - ✅ `update_row_data()` - Update single row (using Iceberg MERGE)
 - ✅ `update_dataframe_data()` - Batch insert/update from pandas DataFrames
+- ✅ `upsert_dataframe_data()` - Upsert (insert or update) in one operation
 - ✅ `delete_row()` - Delete by ID
+
+### File Operations
+- ✅ `load_data_from_file()` - Load data from CSV, JSON, Parquet files
+- ✅ `export_table_to_file()` - Export data to files with optional filtering
+
+### Table Management
+- ✅ `create_table_from_dataframe()` - Create table from pandas DataFrame
+- ✅ `create_table_with_sql()` - Create table using SQL DDL
+- ✅ `clone_table()` - Clone tables with or without data
+- ✅ `drop_table()` - Drop tables with optional purge
+- ✅ `truncate_table()` - Remove all data, keep schema
+
+### Schema Evolution
+- ✅ `add_column()` - Add columns without data rewriting
+- ✅ `drop_column()` - Drop columns without data rewriting
+- ✅ `rename_column()` - Rename columns without data rewriting
+
+### View Operations
+- ✅ `create_view()` - Create SQL views
+- ✅ `drop_view()` - Drop views
 
 ### Utility Operations
 - ✅ `run_sql()` - Execute raw SQL queries
 - ✅ `table_exists()` - Check table existence
 - ✅ `create_namespace()` - Create database/namespace
 - ✅ `get_table_schema()` - Get column names and types
+- ✅ `get_table_name()` - Get fully qualified table name
+- ✅ `test_connection()` - Test connection and get session info
+- ✅ `list_tables()` - List all tables in namespace
+- ✅ `get_table_stats()` - Get comprehensive table statistics
 - ✅ `remove_duplicate_rows()` - Deduplicate by columns
 
 ### Bonus: Iceberg-Specific Features
