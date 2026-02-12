@@ -433,22 +433,6 @@ This connector leverages Apache Iceberg's advanced features:
 - **Hidden Partitioning**: Automatic partition management
 - **Table Maintenance**: Built-in compaction and cleanup
 
-## License
-
-MIT
-
-## Migration from Snowflake
-
-Looking to replace Snowflake with this connector? Check out the [Snowflake Migration Guide](SNOWFLAKE_MIGRATION.md) for:
-- Feature comparison and mapping
-- Migration examples
-- Advantages of Iceberg over Snowflake
-- Deployment options
-
-## Contributing
-
-Contributions welcome! Please feel free to submit a Pull Request.
-
 ## Support
 
 For issues and feature requests, please use the [GitHub Issues](https://github.com/1gn45/iceberg-spark-connector/issues) page.
